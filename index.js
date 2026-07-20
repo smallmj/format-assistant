@@ -21,6 +21,7 @@ import {
     detectIssues,
     extractFormatRequirements,
     buildFixPrompt,
+    lineDiff,
 } from './fixer.js';
 
 const SETTING_ID = 'think_detagger';
@@ -98,6 +99,7 @@ function withTimeout(promise, ms) {
 
 // ---------- 核心：处理单条消息（detag + 可选 LLM 修复）----------
 let is_fixing = false;
+let lastNotifiedMessageId = -1;
 
 async function processMessage(messageId, { force = false, forceFix = false, skipFix = false } = {}) {
     const empty = { changed: false, removedTags: new Set() };
@@ -155,7 +157,17 @@ async function processMessage(messageId, { force = false, forceFix = false, skip
             const plotTag = settings.plotTag || 'now_plot';
             const issues = detectIssues(msg.mes, thinkTags, tags, plotTag);
             if (issues.hasIssues) {
-                await llmFixMessage(messageId, thinkTags, plotTag);
+                if (forceFix) {
+                    // 手动：直接进入 LLM 修复（含 diff 确认窗口）
+                    await llmFixMessage(messageId, thinkTags, plotTag);
+                } else if (lastNotifiedMessageId !== messageId) {
+                    // 自动：先询问，确认才修复（谨慎）
+                    lastNotifiedMessageId = messageId;
+                    const ok = confirm(`Think Detagger：发现可能格式问题：\n${issues.issues.join('\n')}\n\n是否执行 LLM 修复？`);
+                    if (ok) await llmFixMessage(messageId, thinkTags, plotTag);
+                }
+            } else if (forceFix) {
+                toast('未检测到格式问题，无需 LLM 修复');
             }
         }
 
@@ -190,6 +202,9 @@ async function llmFixMessage(messageId, thinkTags, plotTag) {
             toast('LLM 修复未应用：正文叙事文字被改动，已保留原文', 'warning');
             return;
         }
+        // 确认窗口：高亮 diff，用户确认才写回
+        const confirmed = await showFixConfirmDialog(msg.mes, result.fixed_text, result.reason);
+        if (!confirmed) { toast('已取消，未应用修复'); return; }
         msg.mes = result.fixed_text;
         const saveChatDebounced = ctx.saveChatDebounced || window.saveChatDebounced;
         const updateMessageBlock = ctx.updateMessageBlock || window.updateMessageBlock;
@@ -197,7 +212,7 @@ async function llmFixMessage(messageId, thinkTags, plotTag) {
         if (updateMessageBlock) {
             try { updateMessageBlock(messageId, msg); } catch (e) { console.warn(TAG, 'updateMessageBlock 失败', e); }
         }
-        toast(`LLM 修复完成：${result.reason || '已修复'}`);
+        toast('LLM 修复已应用');
     } catch (e) {
         console.error(TAG, 'llmFixMessage 异常', e);
         toast('LLM 修复异常，已保留原文', 'error');
@@ -282,6 +297,37 @@ async function callFixLLM(text, thinkTags, plotTag) {
         console.error(TAG, 'ST generateRaw 失败', e);
         return null;
     }
+}
+
+// ---------- LLM 修复确认窗口（高亮 diff）----------
+function showFixConfirmDialog(original, fixed, reason) {
+    return new Promise((resolve) => {
+        const lines = lineDiff(original, fixed);
+        const eq = lines.filter(l => l.type === 'eq').length;
+        const del = lines.filter(l => l.type === 'del').length;
+        const add = lines.filter(l => l.type === 'add').length;
+        const overlay = document.createElement('div');
+        overlay.className = 'td-modal-overlay';
+        overlay.innerHTML = `
+            <div class="td-modal">
+                <h3 class="td-modal-title">LLM 修复确认</h3>
+                <div class="td-modal-reason"><b>修改原因：</b>${escapeHtml(reason || '(未提供)')}</div>
+                <div class="td-modal-stats"><small>共 ${lines.length} 行：未变 ${eq}，删除 ${del}，新增 ${add}</small></div>
+                <div class="td-diff">
+                    ${lines.map(l => `<div class="td-diff-${l.type}"><span class="td-diff-mark">${l.type === 'del' ? '-' : l.type === 'add' ? '+' : ' '}</span>${escapeHtml(l.text || ' ')}</div>`).join('')}
+                </div>
+                <div class="td-modal-buttons">
+                    <div class="menu_button" id="td_diff_cancel">取消（不修改）</div>
+                    <div class="menu_button" id="td_diff_confirm">确认应用修复</div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        const close = (val) => { overlay.remove(); resolve(val); };
+        overlay.querySelector('#td_diff_cancel').addEventListener('click', () => close(false));
+        overlay.querySelector('#td_diff_confirm').addEventListener('click', () => close(true));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+    });
 }
 
 // ---------- 格式要求来源 ----------
@@ -508,21 +554,30 @@ function ensureFloatingBall() {
     const ball = document.createElement('div');
     ball.id = 'td_floating_ball';
     ball.className = 'td-floating-ball';
-    ball.title = 'Think Detagger\n点击：手动去标签（最近一条 AI 回复）\n拖动：移动位置';
-    ball.innerHTML = '<i class="fa-solid fa-eraser"></i>';
+    ball.title = 'Think Detagger\n左半：去标签 / 右半：LLM修复 / 拖动：移动';
+    ball.innerHTML = `
+        <div class="td-ball-half td-ball-left" data-action="detag" title="去标签（最近一条）">去标</div>
+        <div class="td-ball-half td-ball-right" data-action="fix" title="LLM 修复格式（最近一条）">修复</div>
+    `;
     document.body.appendChild(ball);
 
-    makeDraggable(ball, () => {
-        processLatestMessage().then(r => toast(r.msg));
+    makeDraggable(ball, (_e, downTarget) => {
+        const action = downTarget && downTarget.closest ? (downTarget.closest('[data-action]') || {}).dataset?.action : null;
+        if (action === 'fix') {
+            processLatestMessageFix().then(r => { if (!r.ok) toast(r.msg, 'warning'); });
+        } else {
+            processLatestMessage().then(r => toast(r.msg));
+        }
     });
 }
 
 function makeDraggable(el, onClick) {
     let dragging = false;
     let startX = 0, startY = 0, origX = 0, origY = 0, moved = false;
+    let downTarget = null;
 
     el.addEventListener('pointerdown', (e) => {
-        dragging = true; moved = false;
+        dragging = true; moved = false; downTarget = e.target;
         startX = e.clientX; startY = e.clientY;
         const rect = el.getBoundingClientRect();
         origX = rect.left; origY = rect.top;
@@ -541,7 +596,7 @@ function makeDraggable(el, onClick) {
         if (!dragging) return;
         dragging = false;
         try { el.releasePointerCapture(e.pointerId); } catch {}
-        if (!moved && typeof onClick === 'function') onClick();
+        if (!moved && typeof onClick === 'function') onClick(e, downTarget);
     };
     el.addEventListener('pointerup', endDrag);
     el.addEventListener('pointercancel', endDrag);
@@ -591,7 +646,7 @@ function renderSettingsPanel() {
                 <hr>
                 <div class="td_subhead">LLM 格式修复（可选）</div>
                 <label class="checkbox_label"><input type="checkbox" id="td_llm_fix" ${settings.llmFixEnabled ? 'checked' : ''}><span>启用 LLM 格式修复</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="td_auto_fix" ${settings.autoFix ? 'checked' : ''}><span>自动模式检测到格式问题时自动调用 LLM 修复</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="td_auto_fix" ${settings.autoFix ? 'checked' : ''}><span>自动检测到格式问题时询问是否修复（不自动执行，需确认）</span></label>
                 <div class="td_section td_row">
                     <label for="td_fix_timeout"><small>修复超时（秒）</small></label>
                     <input type="number" id="td_fix_timeout" min="10" max="300" step="5" value="${settings.fixTimeout ?? 60}" class="td_number">

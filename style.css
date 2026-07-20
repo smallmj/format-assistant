@@ -53,27 +53,23 @@
     margin: 4px 0;
 }
 
-/* 悬浮球 */
+/* 悬浮球（两半：左 detag / 右 LLM修复） */
 .td-floating-ball {
     position: fixed;
     right: 20px;
     bottom: 90px;
-    width: 48px;
-    height: 48px;
+    width: 60px;
+    height: 60px;
     border-radius: 50%;
-    background: var(--SmartThemeQuoteColor, #6c5ce7);
-    color: #fff;
     display: flex;
-    align-items: center;
-    justify-content: center;
+    overflow: hidden;
     cursor: pointer;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
     z-index: 99999;
     user-select: none;
-    font-size: 18px;
     transition: transform 0.15s ease, opacity 0.15s ease;
-    opacity: 0.85;
-    touch-action: none; /* 防止触摸拖动时页面滚动/缩放干扰 */
+    opacity: 0.9;
+    touch-action: none;
 }
 .td-floating-ball:hover {
     transform: scale(1.1);
@@ -82,6 +78,18 @@
 .td-floating-ball:active {
     transform: scale(0.95);
 }
+.td-ball-half {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 11px;
+    font-weight: bold;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.td-ball-left { background: #6c5ce7; }
+.td-ball-right { background: #00b894; }
 
 /* LLM 修复设置区 */
 .think-detagger-settings .td_input {
@@ -130,4 +138,55 @@
 .think-detagger-settings hr {
     margin: 10px 0;
     opacity: 0.4;
+}
+
+/* LLM 修复确认窗口 */
+.td-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.td-modal {
+    background: var(--SmartThemeBlurTintColor, #2b2b2b);
+    color: var(--SmartThemeBodyColor, #eee);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 8px;
+    max-width: 820px;
+    width: 100%;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.td-modal-title { margin: 12px 16px 8px; }
+.td-modal-reason { padding: 0 16px 4px; font-size: small; word-break: break-word; }
+.td-modal-stats { padding: 0 16px 8px; opacity: 0.7; }
+.td-diff {
+    flex: 1;
+    overflow: auto;
+    padding: 8px 16px;
+    font-family: monospace;
+    font-size: small;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.td-diff-eq, .td-diff-del, .td-diff-add {
+    padding: 1px 4px;
+    border-radius: 2px;
+}
+.td-diff-eq { opacity: 0.55; }
+.td-diff-del { background: rgba(231, 76, 60, 0.28); color: #ffbbbb; }
+.td-diff-add { background: rgba(39, 174, 96, 0.28); color: #bbffbb; }
+.td-diff-mark { display: inline-block; width: 1.2em; opacity: 0.7; }
+.td-modal-buttons {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    justify-content: flex-end;
 }
