@@ -22,8 +22,11 @@ export const DEFAULT_TAGS = [
 export function getDefaultSettings() {
     return {
         enabled: true,
+        thinkTags: [...BOUNDARY_TAGS],
         tags: [...DEFAULT_TAGS],
         processReasoning: true,
+        showFloatingBall: true,
+        autoDelay: 2,
     };
 }
 
@@ -69,11 +72,12 @@ export function detag(text, tags) {
  *  开/闭标签原文不在 content 区间内（openEnd..closeStart 才是 content）。
  *  openStart/openEnd 为 -1 表示无开标签（仅收尾）。
  */
-export function findThinkRegions(text) {
+export function findThinkRegions(text, thinkTags = BOUNDARY_TAGS) {
     const regions = [];
-    if (!text) return regions;
-    const closeRe = /<\/(think|thinking)>/gi;
-    const openRe = /<(think|thinking)>/gi;
+    if (!text || !thinkTags || thinkTags.length === 0) return regions;
+    const names = thinkTags.map(escapeRegExp).join('|');
+    const closeRe = new RegExp(`</(${names})>`, 'gi');
+    const openRe = new RegExp(`<(${names})>`, 'gi');
     let searchFrom = 0;
     let cm;
     while ((cm = closeRe.exec(text)) !== null) {
@@ -108,8 +112,8 @@ export function findThinkRegions(text) {
  * 处理 mes：定位思考区段，从后往前对每段 content 应用 detag。
  * 返回 { mes, changed }。边界标签 <think></think> 原样保留。
  */
-export function detagMes(mes, tags) {
-    const regions = findThinkRegions(mes);
+export function detagMes(mes, tags, thinkTags = BOUNDARY_TAGS) {
+    const regions = findThinkRegions(mes, thinkTags);
     if (regions.length === 0) return { mes, changed: false };
     let out = mes;
     let changed = false;

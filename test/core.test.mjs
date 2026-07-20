@@ -40,11 +40,11 @@ eq(detag('', TAGS), '', '空串');
 eq(detag('普通文本无标签', TAGS), '普通文本无标签', '无 tag 文本');
 
 console.log('\n== findThinkRegions ==');
-function contents(text) {
-    return findThinkRegions(text).map(r => text.slice(r.contentStart, r.contentEnd));
+function contents(text, tags) {
+    return findThinkRegions(text, tags).map(r => text.slice(r.contentStart, r.contentEnd));
 }
-function openFlags(text) {
-    return findThinkRegions(text).map(r => r.openStart >= 0);
+function openFlags(text, tags) {
+    return findThinkRegions(text, tags).map(r => r.openStart >= 0);
 }
 eq(findThinkRegions('').length, 0, '空串无 region');
 eq(findThinkRegions('<think>无闭标签').length, 0, '无闭标签无 region');
@@ -84,6 +84,20 @@ eq(detagReasoning('推演 <now_plot>X</now_plot>', TAGS).reasoning,
    '推演 now_plotX/now_plot', 'reasoning 整段 detag');
 eq(detagReasoning('', TAGS).changed, false, 'reasoning 空不变');
 eq(detagReasoning(null, TAGS).changed, false, 'reasoning null 不变');
+
+console.log('\n== 自定义思考标签 ==');
+const CT = ['reason', 'cot'];
+eq(contents('<reason>abc</reason>', CT)[0], 'abc', '自定义标签 reason 标准配对');
+eq(contents('abc</reason>', CT)[0], 'abc', '自定义标签 reason 仅收尾');
+eq(openFlags('abc</reason>', CT)[0], false, '自定义标签仅收尾无开标签');
+eq(contents('<cot>xyz</cot>', CT)[0], 'xyz', '自定义标签 cot');
+eq(contents('<think>old</think>', CT).length, 0, 'think 不在自定义标签时不识别');
+eq(detagMes('<reason>推演 <now_plot>X</now_plot></reason>正文', TAGS, CT).mes,
+   '<reason>推演 now_plotX/now_plot</reason>正文', '自定义标签内部去 tag 边界保留');
+eq(detagMes('推演 <now_plot>X</now_plot></reason>正文', TAGS, CT).mes,
+   '推演 now_plotX/now_plot</reason>正文', '自定义标签仅收尾内部去 tag');
+eq(detagMes('<think>a <now_plot>b</now_plot></think>', TAGS).mes,
+   '<think>a now_plotb/now_plot</think>', '不传 thinkTags 用默认 think/thinking');
 
 console.log(`\n== 结果: ${passed} passed, ${failed} failed ==`);
 if (failed > 0) process.exit(1);

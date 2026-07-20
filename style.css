@@ -1,6 +1,12 @@
-/* Think Detagger 设置面板样式 */
+/* Think Detagger 设置面板与悬浮球样式 */
 .think-detagger-settings .td_section {
     margin-top: 8px;
+}
+.think-detagger-settings .td_row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 .think-detagger-settings .td_buttons {
     display: flex;
@@ -19,13 +25,48 @@
     padding: 0 4px;
     border-radius: 3px;
 }
-.think-detagger-settings textarea {
+.think-detagger-settings .td_textarea {
     box-sizing: border-box;
+    width: 100%;
     resize: vertical;
+    font-family: monospace;
+    font-size: small;
+}
+.think-detagger-settings .td_number {
+    width: 70px;
 }
 .think-detagger-settings .checkbox_label {
     display: flex;
     align-items: center;
     gap: 6px;
     margin: 4px 0;
+}
+
+/* 悬浮球 */
+.td-floating-ball {
+    position: fixed;
+    right: 20px;
+    bottom: 90px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--SmartThemeQuoteColor, #6c5ce7);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    z-index: 99999;
+    user-select: none;
+    font-size: 18px;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+    opacity: 0.85;
+}
+.td-floating-ball:hover {
+    transform: scale(1.1);
+    opacity: 1;
+}
+.td-floating-ball:active {
+    transform: scale(0.95);
 }

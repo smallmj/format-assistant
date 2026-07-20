@@ -12,21 +12,33 @@
         <div class="inline-drawer-content">
             <label class="checkbox_label">
                 <input type="checkbox" id="td_enabled" checked>
-                <span>启用自动去 tag 化</span>
+                <span><b>自动模式</b>：每轮对话接收完整后（含额外模型解析）自动去标签</span>
             </label>
             <label class="checkbox_label">
                 <input type="checkbox" id="td_process_reasoning" checked>
                 <span>同时处理原生 reasoning (extra.reasoning)</span>
             </label>
+            <label class="checkbox_label">
+                <input type="checkbox" id="td_show_ball" checked>
+                <span>显示悬浮球（点击手动去标签）</span>
+            </label>
             <div class="td_section">
-                <label for="td_tags"><small>危险 tag 白名单（一行一个；<b>think / thinking 是边界标签，勿加</b>）</small></label>
-                <textarea id="td_tags" rows="8" style="width:100%;font-family:monospace;font-size:small;"></textarea>
+                <label for="td_think_tags"><small>思考内容标签（边界标签，一行一个；如 think / thinking / reasoning / cot 等。这些标签本身保留，只处理其<b>内部</b>的 tag）</small></label>
+                <textarea id="td_think_tags" rows="3" class="td_textarea"></textarea>
+            </div>
+            <div class="td_section">
+                <label for="td_tags"><small>危险 tag 白名单（一行一个；上面的思考标签勿重复加）</small></label>
+                <textarea id="td_tags" rows="8" class="td_textarea"></textarea>
+            </div>
+            <div class="td_section td_row">
+                <label for="td_auto_delay"><small>自动模式延迟（秒，装了 MVU 时等待变量解析；0=立即）</small></label>
+                <input type="number" id="td_auto_delay" min="0" max="60" step="1" value="2" class="td_number">
             </div>
             <div class="td_buttons">
-                <div class="menu_button" id="td_save_btn" title="保存白名单与开关">保存设置</div>
-                <div class="menu_button" id="td_runall_btn" title="立即处理当前聊天所有 AI 消息">立即处理全部消息</div>
+                <div class="menu_button" id="td_save_btn" title="保存设置">保存设置</div>
+                <div class="menu_button" id="td_runall_btn" title="手动处理最近一条 AI 回复">立即处理最近一条</div>
             </div>
-            <small class="td_hint">自动触发时机：MVU 变量更新结束后（装了 MVU 时）或消息接收后。手动命令：<code>/detag-all</code></small>
+            <small class="td_hint">自动与手动都只处理最近一条 AI 回复。手动：<code>/detag</code> 或悬浮球。</small>
         </div>
     </div>
 </div>
