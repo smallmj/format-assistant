@@ -8,6 +8,7 @@ import {
     extractFormatRequirements,
     buildFixPrompt,
     lineDiff,
+    ruleFixStructure,
 } from '../fixer.js';
 
 let passed = 0;
@@ -150,6 +151,41 @@ console.log('\n== lineDiff ==');
     eq(d[0].type, 'add', '空 vs x 为 add');
 }
 eq(lineDiff('same', 'same').length, 1, '单行相同');
+
+console.log('\n== ruleFixStructure ==');
+{
+    const r = ruleFixStructure('<now_plot>正文 ```js\nconsole.log(1)\n``` 更多</now_plot>');
+    ok(r.changed, '代码块迁移 changed');
+    const inner1 = r.text.match(/<now_plot>([\s\S]*?)<\/now_plot>/)[1];
+    ok(!inner1.includes('```'), '代码块已移出 now_plot 内部');
+    ok(r.text.includes('console.log(1)'), '代码块内容保留');
+    ok(/<\/now_plot>[\s\S]*```/.test(r.text), '代码块在 </now_plot> 后');
+}
+{
+    const r = ruleFixStructure('思考内容</think>\n正文叙事内容\n<summary>摘要</summary>');
+    ok(r.changed, '重包裹 changed');
+    ok(/<now_plot>\n正文叙事内容\n<\/now_plot>/.test(r.text), '正文被包进 now_plot');
+    ok(r.text.includes('<summary>摘要</summary>'), 'summary 保留在外');
+}
+{
+    const r = ruleFixStructure('思考</think>\n<now_plot>已有正文</now_plot>\n<summary>摘要</summary>');
+    eq(r.changed, false, '已有 plotTag 对不重包裹');
+}
+{
+    const r = ruleFixStructure('思考</think>\n正文无锚点');
+    eq(r.changed, false, '无锚点不重包裹');
+}
+{
+    const r = ruleFixStructure('无思考闭标签的文本<now_plot>x</now_plot>');
+    // 无 think 闭标签不重包裹；但有 plotTag 对，可能代码块迁移（无代码块不变）
+    eq(r.changed, false, '无 think 闭标签不重包裹');
+}
+{
+    // 自定义 plotTag
+    const r = ruleFixStructure('思考</think>\n正文\n<summary>摘要</summary>', 'story');
+    ok(r.changed, '自定义 plotTag 重包裹');
+    ok(/<story>\n正文\n<\/story>/.test(r.text), '用自定义 plotTag 包裹');
+}
 
 console.log(`\n== 结果: ${passed} passed, ${failed} failed ==`);
 if (failed > 0) process.exit(1);

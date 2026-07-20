@@ -191,3 +191,122 @@ export function lineDiff(original, fixed) {
     while (j < n) { lines.push({ type: 'add', text: b[j] }); j++; }
     return lines;
 }
+
+// ---------- 纯规则结构修复（零成本，LLM 之前先尝试）----------
+// 尾部锚点标签：用来切分"正文"与"尾部数据块"。命中其中任一开标签即视为正文结束。
+const TAIL_ANCHOR_TAGS = [
+    'summary', 'update', 'UpdateVariable', 'update_analysis',
+    'TimePeriod', 'StatusPlaceHolderImpl', 'action', 'action_option',
+    'ExperienceLog', 'LootLog', 'QuestContract', 'CombatSnapshot',
+];
+
+// 找出所有完整的 <plotTag>...</plotTag> 配对区间（栈处理嵌套）
+function getPlotTagRanges(text, plotTag) {
+    const name = escapeRegExp(plotTag);
+    const tagRe = new RegExp(`<\\s*\\/?\\s*${name}\\s*>`, 'gi');
+    const stack = [];
+    const ranges = [];
+    let match;
+    while ((match = tagRe.exec(text)) !== null) {
+        const isClose = /^<\s*\//i.test(match[0]);
+        if (!isClose) { stack.push(match.index); continue; }
+        const openIndex = stack.pop();
+        if (Number.isInteger(openIndex)) {
+            ranges.push({ start: openIndex, end: match.index + match[0].length });
+        }
+    }
+    return ranges;
+}
+
+// 把 plotTag 对内的成对 ``` 代码块移到最后一个 </plotTag> 之后；落单围栏删除。
+// 目的：AI 误用代码块包正文会破坏美化，移出 plotTag 既保留内容又不破坏渲染。
+function evictPlotCodeFences(text, plotTag) {
+    const ranges = getPlotTagRanges(text, plotTag);
+    if (ranges.length === 0) return text;
+    const CODE_BLOCK_RE = /`{3,}[^\n]*\n?[\s\S]*?`{3,}/g;
+    const LONE_FENCE_RE = /`{3,}[ \t]*[A-Za-z0-9_+#.\-]*/g;
+    const evicted = [];
+    const removalSpans = [];
+    for (const range of ranges) {
+        const inner = text.slice(range.start, range.end);
+        CODE_BLOCK_RE.lastIndex = 0;
+        let m;
+        while ((m = CODE_BLOCK_RE.exec(inner)) !== null) {
+            const absStart = range.start + m.index;
+            evicted.push(m[0].replace(/^\s+|\s+$/g, ''));
+            removalSpans.push({ start: absStart, end: absStart + m[0].length });
+        }
+    }
+    let result = text;
+    if (removalSpans.length) {
+        removalSpans.sort((a, b) => b.start - a.start);
+        for (const s of removalSpans) {
+            result = result.slice(0, s.start) + result.slice(s.end);
+        }
+    }
+    // 落单围栏（成对块已移除后扫残留）
+    const loneSpans = [];
+    for (const range of getPlotTagRanges(result, plotTag)) {
+        const inner = result.slice(range.start, range.end);
+        LONE_FENCE_RE.lastIndex = 0;
+        let m;
+        while ((m = LONE_FENCE_RE.exec(inner)) !== null) {
+            loneSpans.push({ start: range.start + m.index, end: range.start + m.index + m[0].length });
+            evicted.push(m[0]);
+        }
+    }
+    if (loneSpans.length) {
+        loneSpans.sort((a, b) => b.start - a.start);
+        for (const s of loneSpans) {
+            result = result.slice(0, s.start) + result.slice(s.end);
+        }
+    }
+    if (evicted.length === 0) return text;
+    const closeRe = new RegExp(`<\\s*\\/\\s*${escapeRegExp(plotTag)}\\s*>`, 'gi');
+    let lastCloseEnd = -1;
+    let cm;
+    while ((cm = closeRe.exec(result)) !== null) {
+        lastCloseEnd = cm.index + cm[0].length;
+    }
+    if (lastCloseEnd < 0) return result;
+    return result.slice(0, lastCloseEnd) + '\n\n' + evicted.join('\n\n') + result.slice(lastCloseEnd);
+}
+
+// 当 plotTag 完全缺失时，把 </think> 后到第一个尾部锚点前的正文包进 plotTag。
+// 已有 plotTag 对 / 无思考闭标签 / 无锚点 -> 不处理（交给 LLM），避免误伤。
+function rewrapPlot(text, plotTag, thinkTags) {
+    const name = escapeRegExp(plotTag);
+    const hasPair = new RegExp(`<\\s*${name}\\s*>[\\s\\S]*<\\s*\\/\\s*${name}\\s*>`, 'i').test(text);
+    if (hasPair) return text;
+    const thinkNames = thinkTags.map(escapeRegExp).join('|');
+    const thinkCloseRe = new RegExp(`<\\/\\s*(?:${thinkNames})\\s*>`, 'i');
+    const thinkMatch = text.match(thinkCloseRe);
+    if (!thinkMatch) return text;
+    const thinkEnd = thinkMatch.index + thinkMatch[0].length;
+    const prefix = text.slice(0, thinkEnd);
+    const tail = text.slice(thinkEnd);
+    const anchorNames = TAIL_ANCHOR_TAGS.map(escapeRegExp).join('|');
+    const anchorRe = new RegExp(`<\\s*(?:${anchorNames})\\b`, 'i');
+    const anchorMatch = tail.match(anchorRe);
+    if (!anchorMatch) return text; // 无锚点不重包裹，避免把变量块误包
+    const anchorIdx = tail.indexOf(anchorMatch[0]);
+    const middle = tail.slice(0, anchorIdx).replace(/^\s+|\s+$/g, '');
+    const suffix = tail.slice(anchorIdx);
+    if (!middle) return text;
+    return `${prefix}\n\n<${plotTag}>\n${middle}\n</${plotTag}>\n\n${suffix.replace(/^\s+/, '')}`;
+}
+
+/**
+ * 纯规则结构修复（零成本）：代码块迁移 + plotTag 重包裹。
+ * 返回 { text, changed, reason }。LLM 修复前先调它，修得了就不必调 LLM。
+ */
+export function ruleFixStructure(text, plotTag = 'now_plot', thinkTags = BOUNDARY_TAGS) {
+    if (!text) return { text: text || '', changed: false, reason: '' };
+    let out = text;
+    const reasons = [];
+    const a = evictPlotCodeFences(out, plotTag);
+    if (a !== out) { out = a; reasons.push('代码块迁移'); }
+    const b = rewrapPlot(out, plotTag, thinkTags);
+    if (b !== out) { out = b; reasons.push('正文重包裹'); }
+    return { text: out, changed: reasons.length > 0, reason: reasons.join('+') };
+}

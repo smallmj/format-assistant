@@ -22,6 +22,7 @@ import {
     extractFormatRequirements,
     buildFixPrompt,
     lineDiff,
+    ruleFixStructure,
 } from './fixer.js';
 
 const SETTING_ID = 'think_detagger';
@@ -101,6 +102,16 @@ function withTimeout(promise, ms) {
 let is_fixing = false;
 let lastNotifiedMessageId = -1;
 
+// 写回 mes 并同步当前 swipe（避免 swipe 切换后修复丢失）
+function setMes(msg, text) {
+    if (!msg) return;
+    msg.mes = text;
+    if (Array.isArray(msg.swipes)) {
+        const sid = Math.max(0, Number(msg.swipe_id ?? 0) || 0);
+        if (sid < msg.swipes.length) msg.swipes[sid] = text;
+    }
+}
+
 async function processMessage(messageId, { force = false, forceFix = false, skipFix = false } = {}) {
     const empty = { changed: false, removedTags: new Set() };
     try {
@@ -117,6 +128,7 @@ async function processMessage(messageId, { force = false, forceFix = false, skip
 
         const tags = settings.tags || DEFAULT_TAGS;
         const thinkTags = settings.thinkTags || BOUNDARY_TAGS;
+        const plotTag = settings.plotTag || 'now_plot';
         let changed = false;
         const removed = new Set();
 
@@ -124,7 +136,7 @@ async function processMessage(messageId, { force = false, forceFix = false, skip
         if (msg.mes) {
             const r = detagMes(msg.mes, tags, thinkTags);
             if (r.changed) {
-                msg.mes = r.mes;
+                setMes(msg, r.mes);
                 changed = true;
                 for (const t of r.removedTags) removed.add(t);
             }
@@ -138,6 +150,15 @@ async function processMessage(messageId, { force = false, forceFix = false, skip
             }
         }
 
+        // 1.5 规则结构修复（零成本，LLM 之前先尝试：代码块迁移 + plotTag 重包裹）
+        if (msg.mes) {
+            const rf = ruleFixStructure(msg.mes, plotTag, thinkTags);
+            if (rf.changed) {
+                setMes(msg, rf.text);
+                changed = true;
+            }
+        }
+
         if (changed) {
             const saveChatDebounced = ctx.saveChatDebounced || window.saveChatDebounced;
             const updateMessageBlock = ctx.updateMessageBlock || window.updateMessageBlock;
@@ -147,14 +168,13 @@ async function processMessage(messageId, { force = false, forceFix = false, skip
             }
         }
 
-        // 2. LLM 修复分支
+        // 2. LLM 修复分支（规则修不了的再交 LLM）
         let doLlmFix;
         if (skipFix) doLlmFix = false;
         else if (forceFix) doLlmFix = true;
         else doLlmFix = settings.llmFixEnabled && settings.autoFix;
 
         if (doLlmFix && !is_fixing && msg.mes) {
-            const plotTag = settings.plotTag || 'now_plot';
             const issues = detectIssues(msg.mes, thinkTags, tags, plotTag);
             if (issues.hasIssues) {
                 if (forceFix) {
@@ -205,7 +225,7 @@ async function llmFixMessage(messageId, thinkTags, plotTag) {
         // 确认窗口：高亮 diff，用户确认才写回
         const confirmed = await showFixConfirmDialog(msg.mes, result.fixed_text, result.reason);
         if (!confirmed) { toast('已取消，未应用修复'); return; }
-        msg.mes = result.fixed_text;
+        setMes(msg, result.fixed_text);
         const saveChatDebounced = ctx.saveChatDebounced || window.saveChatDebounced;
         const updateMessageBlock = ctx.updateMessageBlock || window.updateMessageBlock;
         if (saveChatDebounced) saveChatDebounced();
@@ -907,6 +927,13 @@ jQuery(async () => {
         const genEvt = ctx.eventTypes.GENERATION_ENDED;
         if (genEvt) { ctx.eventSource.on(genEvt, onGenerationEnded); console.log(TAG, '已注册 GENERATION_ENDED'); }
     } catch (e) { console.warn(TAG, '注册 GENERATION_ENDED 失败', e); }
+    try {
+        const editEvt = ctx.eventTypes.MESSAGE_EDITED;
+        if (editEvt) {
+            ctx.eventSource.on(editEvt, (messageId) => { if (messageId != null) processMessage(messageId); });
+            console.log(TAG, '已注册 MESSAGE_EDITED');
+        }
+    } catch (e) { console.warn(TAG, '注册 MESSAGE_EDITED 失败', e); }
 
     waitForMvu().then((mvu) => {
         if (!mvu) { console.log(TAG, '未检测到 MVU'); return; }
