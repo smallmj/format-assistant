@@ -358,6 +358,18 @@ console.log('\n== tag 补全 ==');
     const p = buildFixPrompt({ originalText: 'x', formatRequirements: '', thinkTags: ['think'], plotTag: 'now_plot' });
     ok(p.system.includes('补全缺失'), 'buildFixPrompt 含补全缺失文案');
 }
+{
+    // 含 initvar 的变量初始化消息不报 plotTag 缺失（避免误报）
+    const T = '<UpdateVariable><initvar>主角状态: 筑基</initvar></UpdateVariable>\n正文叙事内容较多时也不报\n<StatusPlaceHolderImpl/>';
+    const d = detectIssues(T, ['think', 'thinking'], ['now_plot', 'UpdateVariable', 'StatusPlaceHolderImpl'], 'now_plot');
+    ok(!d.issues.some(s => s.includes('now_plot 缺失')), '含 initvar 的消息不报 plotTag 缺失');
+}
+{
+    // 纯变量块消息（无 initvar 但叙事极少）也不报 plotTag 缺失
+    const T2 = '<UpdateVariable><json_patch>[{"op":"replace","path":"/a","value":1}]</json_patch></UpdateVariable>';
+    const d2 = detectIssues(T2, ['think', 'thinking'], ['now_plot', 'UpdateVariable'], 'now_plot');
+    ok(!d2.issues.some(s => s.includes('now_plot 缺失')), '纯变量块消息不报 plotTag 缺失');
+}
 
 console.log(`\n== 结果: ${passed} passed, ${failed} failed ==`);
 if (failed > 0) process.exit(1);

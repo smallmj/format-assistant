@@ -61,14 +61,20 @@ export function detectIssues(text, thinkTags = BOUNDARY_TAGS, knownTags = [], pl
         t = t.slice(0, r.contentStart) + t.slice(r.contentEnd);
     }
 
+    // 纯变量/系统消息（剥离变量块/生图后正文叙事极少）或含 initvar（变量初始化消息）跳过 plotTag 缺失检测，避免误报
+    const narrativeLen = stripNonNarrative(t, thinkTags).replace(/<[^>]*>/g, '').replace(/\s/g, '').length;
+    const isVariableOnly = narrativeLen < 50 || /<\s*initvar\b/i.test(t);
+
     const plotName = escapeRegExp(plotTag || 'now_plot');
     const plotRe = new RegExp(`<${plotName}>([\\s\\S]*?)</${plotName}>`, 'i');
-    // 1. 正文容器缺失或为空
-    const plotMatch = t.match(plotRe);
-    if (!plotMatch) {
-        issues.push(`${plotTag} 缺失`);
-    } else if (!plotMatch[1].trim()) {
-        issues.push(`${plotTag} 为空`);
+    // 1. 正文容器缺失或为空（纯变量消息跳过）
+    const plotMatch = isVariableOnly ? null : t.match(plotRe);
+    if (!isVariableOnly) {
+        if (!plotMatch) {
+            issues.push(`${plotTag} 缺失`);
+        } else if (!plotMatch[1].trim()) {
+            issues.push(`${plotTag} 为空`);
+        }
     }
 
     // 2. 正文在容器外：容器为空时，检查 </think> 后是否有大段正文
